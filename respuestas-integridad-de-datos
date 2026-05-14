@@ -1,0 +1,279 @@
+TRABAJO PRÁCTICO: Integridad y Manipulación de Datos en Sistemas Relacionales
+ PARTE I: INVESTIGACIÓN, ANÁLISIS CRÍTICO Y DEMOSTRACIÓN PRÁCTICA
+
+TEMA 1: EL PELIGRO DEL "EMPTY WHERE" (OLVIDAR LA CLÁUSULA WHERE)
+
+EXPLICACIÓN TÉCNICA:
+Cuando se ejecuta un comando UPDATE o DELETE omitiendo la cláusula WHERE, 
+el motor de la base de datos interpreta que la acción se debe aplicar 
+de forma global a absolutamente todos los registros de la tabla.
+
+1. PROCESAMIENTO EN MEMORIA (RAM):
+   - Lectura masiva (Table Scan): El optimizador de consultas realiza un 
+     escaneo secuencial completo de la tabla al no existir un índice o 
+     criterio que filtre las filas.
+
+   - Saturación del Buffer Pool: El motor se ve obligado a cargar todas 
+     las páginas de datos de la tabla desde el disco hacia la memoria RAM.
+
+   - Desalojo de datos útiles: Esta carga masiva desplaza de la memoria 
+     otras páginas de datos frecuentemente utilizadas, degradando el 
+     rendimiento general del servidor.
+
+   - Bloqueo total (Locking): El motor solicita bloqueos exclusivos (X locks) 
+     sobre cada fila o sobre la tabla entera, congelando el acceso concurrente 
+     y bloqueando a otros usuarios.
+
+2. IMPACTO EN EL ALMACENAMIENTO (DISCO):
+   - Saturación del Log de Transacciones (WAL / Redo Log): Cada fila afectada 
+     debe registrarse en el historial de transacciones para garantizar la 
+     durabilidad (propiedad ACID). Modificar millones de filas puede llenar 
+     el disco del log por completo y colapsar el sistema.
+
+   - Efecto Basura (Bloat - MVCC como PostgreSQL): El comando DELETE no borra 
+     el dato físicamente de inmediato, sino que marca las filas como "muertas". 
+     Un UPDATE escribe una versión completamente nueva de la fila. Esto duplica 
+     o triplica el espacio físico utilizado por la tabla en disco al instante.
+
+   - Reserva de espacio (MySQL / SQL Server): Los registros se eliminan de 
+     las páginas, pero el espacio queda reservado y asignado al archivo de la 
+     base de datos. El archivo en el sistema operativo no reduce su tamaño.
+
+DEMOSTRACIÓN PRÁCTICA DEL "EMPTY WHERE"
+
+DROP TABLE IF EXISTS usuarios;
+
+CREATE TABLE usuarios (
+    id_usuario INT PRIMARY KEY,
+    nombre VARCHAR(50),
+    estado VARCHAR(20)
+);
+
+INSERT INTO usuarios (id_usuario, nombre, estado) VALUES
+(1, 'Alejandro', 'Activo'),
+(2, 'Sofía', 'Inactivo'),
+(3, 'Matías', 'Activo'),
+(4, 'Lucía', 'Inactivo');
+
+DELETE FROM usuarios; 
+
+-- [FORMA CORRECTA Y SEGURA]
+
+DELETE FROM usuarios 
+WHERE id_usuario = 2;
+
+
+
+TEMA 2: INTEGRIDAD REFERENCIAL Y RESTRICCIONES DE CLAVE FORÁNEA
+
+
+EXPLICACIÓN :
+Una restricción de clave foránea (FOREIGN KEY constraint) es una regla 
+lógica que vincula una columna de una tabla hija con la clave primaria 
+(PRIMARY KEY) de una tabla padre. Su función primordial es garantizar la 
+consistencia relacional, impidiendo la existencia de datos "huérfanos".
+
+PROTECCIÓN DE LA CONSISTENCIA DURANTE UN "DELETE":
+Si un usuario intenta eliminar un registro de la tabla padre que todavía 
+está asociado a registros en la tabla hija, la clave foránea interviene 
+y aplica una de las siguientes estrategias de protección configuradas:
+
+1. RESTRICT / NO ACTION (Comportamiento por defecto):
+   El motor detiene la ejecución inmediatamente. Cancela la sentencia DELETE, 
+   realiza un rollback y lanza un error de violación de integridad referencial. 
+   Protege los datos hijos prohibiendo la eliminación del padre.
+
+2. CASCADE (Borrado en cadena):
+   El motor permite la eliminación en la tabla padre y, en cascada, busca 
+   y elimina de forma automática todos los registros vinculados en la tabla hija.
+
+3. SET NULL (Desconexión):
+   El motor elimina el registro de la tabla padre, pero en lugar de borrar 
+   los registros hijos, modifica sus valores de clave foránea estableciéndolos 
+   en NULL (vacío), desvinculándolos de forma segura.
+
+DEMOSTRACIÓN PRÁCTICA DE INTEGRIDAD REFERENCIAL
+
+
+DROP TABLE IF EXISTS pedidos;
+DROP TABLE IF EXISTS clientes;
+
+-- 1. Creación de la Tabla Principal (Padre)
+CREATE TABLE clientes (
+    id_cliente INT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL
+);
+
+-- 2. Creación de la Tabla Secundaria (Hija) con regla RESTRICT (Protección estricta)
+CREATE TABLE pedidos (
+    id_pedido INT PRIMARY KEY,
+    monto DECIMAL(10,2),
+    cliente_id INT,
+    CONSTRAINT fk_pedidos_clientes
+        FOREIGN KEY (cliente_id) 
+        REFERENCES clientes(id_cliente) 
+        ON DELETE RESTRICT
+);
+
+-- Inserción de datos de prueba
+INSERT INTO clientes (id_cliente, nombre) VALUES 
+(1, 'Carlos Pérez'),
+(2, 'María Rodríguez');
+
+INSERT INTO pedidos (id_pedido, monto, cliente_id) VALUES 
+(101, 1500.00, 1),  -- Pedido asociado a Carlos
+(102, 3200.50, 2);  -- Pedido asociado a María
+
+-- [DEMOSTRACIÓN DE PROTECCIÓN RESTRICTIVA]
+-- Intentar borrar a Carlos (id 1) fallará y lanzará un error de integridad
+-- porque el pedido 101 perdería su referencia y quedaría huérfano.
+-- DETECTA ERROR AQUÍ:
+-- DELETE FROM clientes WHERE id_cliente = 1;
+
+
+ COMPORTAMIENTO ALTERNATIVO: CASCADA 
+
+-- Eliminamos la restricción restrictiva para actualizar la regla
+ALTER TABLE pedidos DROP CONSTRAINT fk_pedidos_clientes;
+
+-- Agregamos la restricción configurada con ON DELETE CASCADE
+ALTER TABLE pedidos ADD CONSTRAINT fk_pedidos_clientes_cascade
+    FOREIGN KEY (cliente_id) 
+    REFERENCES clientes(id_cliente) 
+    ON DELETE CASCADE;
+
+-- [DEMOSTRACIÓN DE BORRADO EN CASCADA]
+-- Al eliminar a María (id 2), el motor no arroja error. Borra su registro 
+-- y destruye de forma automática el pedido 102 en la tabla dependiente.
+DELETE FROM clientes 
+WHERE id_cliente = 2;
+
+-- Verificación final del estado de los datos
+SELECT * FROM clientes; -- Solo queda Carlos Pérez
+SELECT * FROM pedidos;  -- Solo queda el pedido de Carlos Pérez (101)
+
+-------------------------------------------------------------------------------------------------------
+
+Parte II: Implementación Práctica (Caso Chinook)
+
+-- 1. GESTIÓN DE CATÁLOGO
+
+INSERT INTO artists (Name)
+VALUES ('Divididos');
+
+INSERT INTO albums (Title, ArtistId)
+VALUES (
+    'Ala Delta',
+    (SELECT ArtistId FROM artists WHERE Name = 'Divididos')
+);
+
+INSERT INTO tracks
+(Name, AlbumId, MediaTypeId, GenreId, Composer, Milliseconds, Bytes, UnitPrice)
+VALUES
+(
+    'Par Mil',
+    (SELECT AlbumId FROM albums WHERE Title = 'Ala Delta'),
+    1,
+    1,
+    'Divididos',
+    240000,
+    5000000,
+    0.99
+);
+
+INSERT INTO tracks
+(Name, AlbumId, MediaTypeId, GenreId, Composer, Milliseconds, Bytes, UnitPrice)
+VALUES
+(
+    'Spaghetti del Rock',
+    (SELECT AlbumId FROM albums WHERE Title = 'Ala Delta'),
+    1,
+    1,
+    'Divididos',
+    260000,
+    5200000,
+    0.99
+);
+
+
+-- 2. MANTENIMIENTO Y PRECIOS
+
+UPDATE employees
+SET Address = 'Av. Siempreviva 742',
+    City = 'Springfield'
+WHERE EmployeeId = 3;
+
+UPDATE tracks
+SET UnitPrice = UnitPrice * 1.10
+WHERE GenreId = 2;
+
+
+-- 3. DEPURACIÓN DE REGISTROS
+
+-- Intento de eliminar Queen
+-- Da error: FOREIGN KEY constraint failed
+
+DELETE FROM invoice_items
+WHERE TrackId IN (
+    SELECT TrackId
+    FROM tracks
+    WHERE AlbumId IN (
+        SELECT AlbumId
+        FROM albums
+        WHERE ArtistId = (
+            SELECT ArtistId
+            FROM artists
+            WHERE Name = 'Queen'
+        )
+    )
+);
+
+DELETE FROM playlist_track
+WHERE TrackId IN (
+    SELECT TrackId
+    FROM tracks
+    WHERE AlbumId IN (
+        SELECT AlbumId
+        FROM albums
+        WHERE ArtistId = (
+            SELECT ArtistId
+            FROM artists
+            WHERE Name = 'Queen'
+        )
+    )
+);
+
+DELETE FROM tracks
+WHERE AlbumId IN (
+    SELECT AlbumId
+    FROM albums
+    WHERE ArtistId = (
+        SELECT ArtistId
+        FROM artists
+        WHERE Name = 'Queen'
+    )
+);
+
+DELETE FROM albums
+WHERE ArtistId = (
+    SELECT ArtistId
+    FROM artists
+    WHERE Name = 'Queen'
+);
+
+DELETE FROM artists
+WHERE Name = 'Queen';
+
+
+-- Eliminar facturas del año 2010
+
+DELETE FROM invoice_items
+WHERE InvoiceId IN (
+    SELECT InvoiceId
+    FROM invoices
+    WHERE InvoiceDate LIKE '2010%'
+);
+
+DELETE FROM invoices
+WHERE InvoiceDate LIKE '2010%';
+
