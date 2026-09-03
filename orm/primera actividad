@@ -1,0 +1,229 @@
+from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, and_, or_
+from sqlalchemy.orm import declarative_base, sessionmaker
+
+# ==========================================
+# 1) DEFINICIÓN DEL MODELO Y CONFIGURACIÓN
+# ==========================================
+engine = create_engine('sqlite:///tienda.db', echo=False)
+Base = declarative_base()
+
+class Producto(Base):
+    __tablename__ = 'productos'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    nombre = Column(String, nullable=False)
+    categoria = Column(String, nullable=True)
+    precio = Column(Float, nullable=True)
+    stock = Column(Integer, nullable=False)
+    activo = Column(Boolean, default=True)
+
+# Crear la tabla en la base de datos
+Base.metadata.create_all(engine)
+
+# Configurar e inicializar la sesión
+Session = sessionmaker(bind=engine)
+session = Session()
+
+
+# ==========================================
+# 2) INSERCIÓN DE LOS 10 PRODUCTOS
+# ==========================================
+productos_iniciales = [
+    Producto(nombre="Teclado mecanico", categoria="perifericos", precio=8500.0, stock=15),
+    Producto(nombre="Mouse inalambrico", categoria="perifericos", precio=4200.0, stock=30),
+    Producto(nombre="Monitor 24 pulgadas", categoria="monitores", precio=62000.0, stock=8),
+    Producto(nombre="Auriculares bluetooth", categoria="audio", precio=12300.0, stock=20),
+    Producto(nombre="Webcam Full HD", categoria="perifericos", precio=9800.0, stock=12),
+    Producto(nombre="SSD 1TB", categoria="almacenamiento", precio=18500.0, stock=25),
+    Producto(nombre="RAM 16GB", categoria="componentes", precio=15600.0, stock=18),
+    Producto(nombre="Mousepad XL", categoria="perifericos", precio=2100.0, stock=40),
+    Producto(nombre="Hub USB-C", categoria="accesorios", precio=5400.0, stock=6, activo=False),
+    Producto(nombre="Cable HDMI", categoria="accesorios", precio=1800.0, stock=50)
+]
+
+session.add_all(productos_iniciales)
+session.commit()
+
+cantidad = session.query(Producto).count()
+print(f"--- Ejercicio 2 ---")
+print(f"Cantidad de productos iniciales guardados: {cantidad}\n")
+
+
+# ==========================================
+# 3) FILTRAR CATEGORÍA "PERIFERICOS"
+# ==========================================
+print(f"--- Ejercicio 3 ---")
+perifericos = session.query(Producto).filter(Producto.categoria == "perifericos").all()
+for prod in perifericos:
+    print(f"Nombre: {prod.nombre} | Precio: ${prod.precio}")
+print()
+
+
+# ==========================================
+# 4) PRECIO MAYOR A $10000 (ORDENADO)
+# ==========================================
+print(f"--- Ejercicio 4 ---")
+caros = session.query(Producto).filter(Producto.precio > 10000).order_by(Producto.precio.desc()).all()
+for prod in caros:
+    print(f"Producto: {prod.nombre} | Precio: ${prod.precio}")
+print()
+
+
+# ==========================================
+# 5) STOCK <= 12 Y ACTIVOS
+# ==========================================
+print(f"--- Ejercicio 5 ---")
+# ¿Por qué no aparece el Hub USB-C? Porque se insertó con activo=False y la query pide True.
+pocos_activos = session.query(Producto).filter(Producto.stock <= 12, Producto.activo == True).all()
+for prod in pocos_activos:
+    print(f"Producto: {prod.nombre} | Stock: {prod.stock}")
+print()
+
+
+# ==========================================
+# 6) FILTRAR RANGO ENTRE $5000 Y $20000
+# ==========================================
+print(f"--- Ejercicio 6 ---")
+rango_precios = session.query(Producto).filter(and_(Producto.precio >= 5000, Producto.precio <= 20000)).all()
+for prod in rango_precios:
+    print(f"Producto: {prod.nombre} | Precio: ${prod.precio}")
+print()
+
+
+# ==========================================
+# 7) PRODUCTO MÁS CARO (.FIRST())
+# ==========================================
+print(f"--- Ejercicio 7 ---")
+mas_caro = session.query(Producto).order_by(Producto.precio.desc()).first()
+print(f"El producto más caro es: {mas_caro.nombre} (${mas_caro.precio})\n")
+
+
+# ==========================================
+# 8) FILTRAR PRODUCTOS INACTIVOS
+# ==========================================
+print(f"--- Ejercicio 8 ---")
+inactivos = session.query(Producto).filter(Producto.activo == False).all()
+for prod in inactivos:
+    print(f"Producto inactivo: {prod.nombre}")
+print()
+
+
+# ==========================================
+# 9) CATEGORÍA AUDIO O COMPONENTES (OR)
+# ==========================================
+print(f"--- Ejercicio 9 ---")
+audio_o_componentes = session.query(Producto).filter(or_(Producto.categoria == "audio", Producto.categoria == "componentes")).all()
+for prod in audio_o_componentes:
+    print(f"Producto: {prod.nombre} | Categoría: {prod.categoria}")
+print()
+
+
+# ==========================================
+# 10) CONTIENE LA LETRA "A" MINÚSCULA
+# ==========================================
+print(f"--- Ejercicio 10 ---")
+con_letra_a = session.query(Producto).filter(Producto.nombre.contains("a")).all()
+print(f"Cantidad de productos que contienen la letra 'a': {len(con_letra_a)}")
+print()
+
+
+# ==========================================
+# 11) EMPIEZA CON "M"
+# ==========================================
+print(f"--- Ejercicio 11 ---")
+empiezan_con_m = session.query(Producto).filter(Producto.nombre.startswith("M")).all()
+print(f"Cantidad que empieza con 'M' (deben ser 3): {len(empiezan_con_m)}")
+for prod in empiezan_con_m:
+    print(f"- {prod.nombre}")
+print()
+
+
+# ==========================================
+# 12) VALORES NULOS (NULL)
+# ==========================================
+print(f"--- Ejercicio 12 ---")
+producto_nulo = Producto(nombre="Producto Misterioso", categoria=None, precio=None, stock=0)
+session.add(producto_nulo)
+session.commit()
+
+cat_null = session.query(Producto).filter(Producto.categoria == None).all()
+precio_null = session.query(Producto).filter(Producto.precio == None).all()
+# Ambos filtros traen el mismo producto ("Producto Misterioso") porque ambos campos son None
+print(f"Productos con categoría NULL: {[p.nombre for p in cat_null]}")
+print(f"Productos con precio NULL: {[p.nombre for p in precio_null]}\n")
+
+
+# ==========================================
+# 13) ACTUALIZAR HUB USB-C POR ID
+# ==========================================
+print(f"--- Ejercicio 13 ---")
+hub = session.get(Producto, 9)  # El ID suele ser 9 por el orden de inserción
+if hub:
+    hub.stock = 20
+    hub.activo = True
+    session.commit()
+
+hub_verificado = session.get(Producto, 9)
+print(f"Hub actualizado -> Stock: {hub_verificado.stock} | Activo: {hub_verificado.activo}\n")
+
+
+# ==========================================
+# 14) AUMENTO DEL 10% A PERIFÉRICOS
+# ==========================================
+print(f"--- Ejercicio 14 ---")
+perifericos_a_modificar = session.query(Producto).filter(Producto.categoria == "perifericos").all()
+for prod in perifericos_a_modificar:
+    prod.precio = prod.precio * 1.10
+session.commit()
+
+teclado = session.get(Producto, 1)  # ID 1 asignado al teclado mecánico
+print(f"Precio del Teclado mecánico con el 10% de aumento: ${teclado.precio:.2f}\n")
+
+
+# ==========================================
+# 15) ELIMINAR EL CABLE HDMI POR ID
+# ==========================================
+print(f"--- Ejercicio 15 ---")
+cable = session.get(Producto, 10)  # ID 10 asignado al cable HDMI
+if cable:
+    session.delete(cable)
+    session.commit()
+print(f"Cantidad total de productos tras borrar el cable: {session.query(Producto).count()}\n")
+
+
+# ==========================================
+# 16) ELIMINACIÓN CONDICIONAL DE REGISTROS
+# ==========================================
+print(f"--- Ejercicio 16 ---")
+a_eliminar = session.query(Producto).filter(or_(Producto.precio < 2000, Producto.activo == False)).all()
+cantidad_borrados = len(a_eliminar)
+
+for prod in a_eliminar:
+    session.delete(prod)
+session.commit()
+
+print(f"Cantidad de productos eliminados uno por uno: {cantidad_borrados}\n")
+
+
+# ==========================================
+# SECCIÓN: SI TERMINARON (EXTRAS)
+# ==========================================
+print(f"--- Ejercicios Extra ---")
+
+# Extra 1: Contiene "USB"
+productos_usb = session.query(Producto).filter(Producto.nombre.contains("USB")).all()
+print(f"Contienen 'USB': {[p.nombre for p in productos_usb]}")
+
+# Extra 2: Orden doble por Categoría y Precio
+orden_doble = session.query(Producto).order_by(Producto.categoria.asc(), Producto.precio.asc()).all()
+print("\nOrdenados por Categoría y Precio:")
+for prod in orden_doble:
+    print(f"  [{prod.categoria}] ${prod.precio} - {prod.nombre}")
+
+# Extra 3: Conteo por separado de activos e inactivos
+activos_count = session.query(Producto).filter(Producto.activo == True).count()
+inactivos_count = session.query(Producto).filter(Producto.activo == False).count()
+print(f"\nProductos Activos: {activos_count} | Productos Inactivos: {inactivos_count}")
+
+# Cierre definitivo de la sesión
+session.close()
